@@ -1,0 +1,539 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>अक्षर कालकोठरी</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      text-align: center;
+    }
+    #game {
+      display: grid;
+      grid-template-columns: repeat(10, 40px);
+      grid-template-rows: repeat(10, 40px);
+      margin: 20px auto;
+      border: 2px solid #333;
+      width: 400px;
+      height: 400px;
+    }
+    .cell {
+      width: 40px;
+      height: 40px;
+      border: 1px solid #ccc;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.2em;
+    }
+    .player { background-color: #4CAF50; color: white; }
+    .monster { background-color: #f44336; color: white; }
+    .treasure { background-color: #ffeb3b; color: #333; }
+    .potion { background-color: #2196F3; color: white; }
+    .stairs { background-color: #9C27B0; color: white; }
+    .wall { background-color: #999; }
+    #event-log {
+      max-width: 400px;
+      margin: 20px auto;
+      text-align: left;
+      border: 1px solid #ddd;
+      padding: 10px;
+      height: 100px;
+      overflow-y: auto;
+      background: #fefefe;
+    }
+    .log-entry {
+      cursor: pointer;
+      color: #4CAF50;
+      margin: 0;
+    }
+    .log-entry:hover {
+      text-decoration: underline;
+    }
+    .accordion {
+      max-width: 600px;
+      margin: 10px auto;
+      text-align: left;
+      border: 1px solid #ccc;
+      background: #f9f9f9;
+    }
+    .accordion h3 {
+      margin: 0;
+      padding: 10px;
+      background: #eee;
+      cursor: pointer;
+    }
+    .accordion-content {
+      display: none;
+      padding: 10px;
+    }
+    .sound-toggle {
+      cursor: pointer;
+      margin-left: 10px;
+    }
+    #letters-conquered {
+      max-width: 400px;
+      margin: 20px auto;
+      border: 1px solid #ccc;
+      padding: 10px;
+      background-color: #fafafa;
+    }
+    .conquered-letter {
+      display: inline-block;
+      margin: 4px;
+      padding: 6px 10px;
+      border: 1px solid #999;
+      border-radius: 4px;
+      cursor: pointer;
+      background-color: #e0ffe0;
+    }
+    .conquered-letter:hover {
+      background-color: #c0ffc0;
+    }
+  </style>
+</head>
+<body>
+  <h1>अक्षर कालकोठरी</h1>
+
+  <div class="accordion">
+    <h3 onclick="toggleAccordion()">खेल कैसे खेलें</h3>
+    <div class="accordion-content" id="instructions">
+      <ul>
+        <li><strong>प्</strong> = खिलाड़ी</li>
+        <li><strong>ख</strong> = खजाना</li>
+        <li><strong>द</strong> = दवा (औषधि)</li>
+        <li><strong>स</strong> = सीढ़ियाँ</li>
+        <li><strong>अ–ह</strong> = राक्षस (मॉनस्टर)। क्लिक करके उच्चारण सुनें।</li>
+      </ul>
+      <p>तीर कुंजियों का उपयोग करके खिलाड़ी को हिलाएँ। पासा फेंकें, राक्षसों से लड़ें, और अगली मंजिल तक पहुँचें।</p>
+    </div>
+  </div>
+
+  <div id="game"></div>
+
+  <p id="status">तीर कुंजियों से घूमना शुरू करें!</p>
+  <p>
+    स्तर: <span id="level">अ</span> |
+    स्वास्थ्य: <span id="health">100</span> |
+    कवच: <span id="armor">0</span> |
+    सिक्के: <span id="coins">0</span>
+    <span class="sound-toggle" onclick="toggleSound()">🔊</span>
+  </p>
+
+  <div id="dice-game" style="display:none;">
+    <p>
+      पासा फेंको! प्रत्येक बटन को क्लिक करके फेंका जा सकता है।
+      <button onclick="autoResolveCombat()">स्वचालित लड़ाई</button>
+    </p>
+    <p>
+      खिलाड़ी स्वास्थ्य: <span id="player-combat-health">0</span> |
+      राक्षस <span id="monster-type">X</span> स्वास्थ्य: <span id="monster-combat-health">0</span>
+    </p>
+    <button onclick="rollPlayerDice()">खिलाड़ी का पासा: <span id="player-dice">0</span></button>
+    <button onclick="rollMonsterDice()">राक्षस का पासा: <span id="monster-dice">0</span></button>
+    <p id="dice-result"></p>
+  </div>
+
+  <div id="event-log">
+    <p><strong>घटनाओं की सूची:</strong></p>
+    <div id="log-entries"></div>
+  </div>
+
+  <div id="letters-conquered">
+    <strong>पराजित राक्षस:</strong>
+    <div id="conquered-list"></div>
+  </div>
+<script>
+  const hindiLetters = [
+    "अ", "आ", "इ", "ई", "उ", "ऊ", "ए", "ऐ", "ओ", "औ",
+    "क", "ख", "ग", "घ", "च", "छ", "ज", "झ", "ट", "ठ",
+    "ड", "ढ", "त", "थ", "द", "ध", "न", "प", "फ", "ब"
+  ];
+
+  const gameSize = 10;
+  const gameGrid = document.getElementById("game");
+
+  let player = { x: 0, y: 0, hp: 100, armor: 0, coins: 0, maxHp: 100 };
+  let currentLevel = 0;
+  let monsters = [], treasures = [], potions = [], walls = [], stairs = {};
+  let currentMonster = null;
+  let playerRolled = false, monsterRolled = false, autoResolving = false;
+  let defeatedLetters = {};
+
+  let soundEnabled = true;
+
+  const labels = {
+    "प्": "प् से खिलाड़ी",
+    "ख": "ख से खजाना",
+    "द": "द से दवा",
+    "स": "स से सीढ़ियाँ"
+  };
+
+  const letterWords = {
+    "अ": "अ से अनार", "आ": "आ से आम", "इ": "इ से इमली", "ई": "ई से ईख", "उ": "उ से उल्लू",
+    "ऊ": "ऊ से ऊन", "ए": "ए से एड़ी", "ऐ": "ऐ से ऐनक", "ओ": "ओ से ओखली", "औ": "औ से औरत",
+    "क": "क से कबूतर", "ख": "ख से खरगोश", "ग": "ग से गमला", "घ": "घ से घर", "च": "च से चम्मच",
+    "छ": "छ से छतरी", "ज": "ज से जहाज़", "झ": "झ से झूला", "ट": "ट से टमाटर", "ठ": "ठ से ठेला",
+    "ड": "ड से डमरू", "ढ": "ढ से ढोल", "त": "त से तरबूज", "थ": "थ से थाली", "द": "द से दरवाज़ा",
+    "ध": "ध से धनुष", "न": "न से नल", "प": "प से पतंग", "फ": "फ से फूल", "ब": "ब से बिल्ली"
+  };
+
+  const toggleAccordion = () => {
+    const panel = document.getElementById("instructions");
+    panel.style.display = panel.style.display === "block" ? "none" : "block";
+  };
+
+  const toggleSound = () => {
+    soundEnabled = !soundEnabled;
+    document.querySelector('.sound-toggle').textContent = soundEnabled ? '🔊' : '🔇';
+  };
+
+  const speak = (text) => {
+    if (!soundEnabled) return;
+    const utter = new SpeechSynthesisUtterance(text);
+    utter.lang = "hi-IN";
+    speechSynthesis.cancel();
+    setTimeout(() => speechSynthesis.speak(utter), 100);
+  };
+
+  const speakAndWait = (text, callback) => {
+    if (!soundEnabled) return callback();
+    const utter = new SpeechSynthesisUtterance(text);
+    utter.lang = "hi-IN";
+    utter.onend = callback;
+    speechSynthesis.cancel();
+    setTimeout(() => speechSynthesis.speak(utter), 100);
+  };
+
+  const logEvent = (message) => {
+    const entry = document.createElement("p");
+    entry.textContent = message;
+    entry.className = "log-entry";
+    const last = message.split(" ").at(-1);
+    if (letterWords[last] || labels[last]) {
+      entry.onclick = () => speak(letterWords[last] || labels[last]);
+    }
+    const logBox = document.getElementById("log-entries");
+    if (logBox) logBox.appendChild(entry);
+  };
+
+  const updateConqueredLetters = () => {
+    const box = document.getElementById("conquered-list");
+    box.innerHTML = '';
+    Object.entries(defeatedLetters).forEach(([letter, count]) => {
+      const tag = document.createElement("span");
+      tag.className = "conquered-letter";
+      tag.textContent = `${letter} × ${count}`;
+      tag.onclick = () => speak(letterWords[letter] || letter);
+      box.appendChild(tag);
+    });
+  };
+
+  const rollDie = () => Math.floor(Math.random() * 20) + 1;
+
+  const rollPlayerDice = () => {
+    if (playerRolled) return;
+    const result = rollDie();
+    document.getElementById('player-dice').textContent = result;
+    speak(`खिलाड़ी ने ${result} निकाला`);
+    playerRolled = true;
+    evaluateCombat();
+  };
+
+  const rollMonsterDice = () => {
+    if (monsterRolled) return;
+    const result = rollDie();
+    document.getElementById('monster-dice').textContent = result;
+    speak(`राक्षस ने ${result} निकाला`);
+    monsterRolled = true;
+    evaluateCombat();
+  };
+
+  const autoResolveCombat = () => {
+    if (!currentMonster) return;
+    autoResolving = true;
+
+    const loop = () => {
+      if (!currentMonster || !autoResolving) return;
+      const pRoll = rollDie();
+      const mRoll = rollDie();
+      document.getElementById('player-dice').textContent = pRoll;
+      document.getElementById('monster-dice').textContent = mRoll;
+      playerRolled = monsterRolled = true;
+
+      speakAndWait(`खिलाड़ी ने ${pRoll} निकाला`, () => {
+        speakAndWait(`राक्षस ने ${mRoll} निकाला`, () => {
+          evaluateCombat();
+          if (currentMonster && autoResolving) setTimeout(loop, 600);
+        });
+      });
+    };
+
+    loop();
+  };
+</script>
+<script>
+  const evaluateCombat = () => {
+    if (!playerRolled || !monsterRolled) return;
+
+    const p = parseInt(document.getElementById("player-dice").textContent);
+    const m = parseInt(document.getElementById("monster-dice").textContent);
+
+    if (p >= m) {
+      currentMonster.hp -= 20;
+      if (currentMonster.hp <= 0) {
+        const letter = currentMonster.type;
+        defeatedLetters[letter] = (defeatedLetters[letter] || 0) + 1;
+        updateConqueredLetters();
+        logEvent(`राक्षस ${letter} को हराया!`);
+        monsters = monsters.filter(mon => mon !== currentMonster);
+        player.maxHp += 10;
+        player.hp += 10;
+        document.getElementById('status').textContent = `${letter} को हराया गया!`;
+        hideDice();
+        autoResolving = false;
+      } else {
+        logEvent(`राक्षस ${currentMonster.type} को चोट पहुंची (HP: ${currentMonster.hp})`);
+        document.getElementById('status').textContent = `राक्षस को चोट (HP: ${currentMonster.hp})`;
+        resetDice();
+      }
+    } else {
+      if (player.armor > 0) player.armor -= 20;
+      else player.hp -= 20;
+      logEvent(`राक्षस ${currentMonster.type} ने हमला किया! (HP: ${player.hp})`);
+      document.getElementById('status').textContent = `आपको नुकसान हुआ! (HP: ${player.hp})`;
+      if (player.hp <= 0) {
+        alert("खेल समाप्त!");
+        startGame();
+        return;
+      }
+      resetDice();
+    }
+
+    document.getElementById('health').textContent = player.hp;
+    document.getElementById('armor').textContent = player.armor;
+    document.getElementById('player-combat-health').textContent = player.hp;
+    document.getElementById('monster-combat-health').textContent = currentMonster?.hp || 0;
+  };
+
+  const resetDice = () => {
+    playerRolled = false;
+    monsterRolled = false;
+    document.getElementById('player-dice').textContent = "0";
+    document.getElementById('monster-dice').textContent = "0";
+  };
+
+  const showDice = () => {
+    document.getElementById("dice-game").style.display = "block";
+    document.getElementById("monster-type").textContent = currentMonster.type;
+    document.getElementById("player-combat-health").textContent = player.hp;
+    document.getElementById("monster-combat-health").textContent = currentMonster.hp;
+    resetDice();
+  };
+
+  const hideDice = () => {
+    document.getElementById("dice-game").style.display = "none";
+    currentMonster = null;
+  };
+
+  const drawGrid = () => {
+    gameGrid.innerHTML = '';
+    for (let y = 0; y < gameSize; y++) {
+      for (let x = 0; x < gameSize; x++) {
+        const cell = document.createElement("div");
+        cell.className = "cell";
+
+        if (x === player.x && y === player.y) {
+          cell.classList.add("player");
+          cell.textContent = "प्";
+          cell.onclick = () => speak(labels["प्"]);
+        } else if (monsters.some(m => m.x === x && m.y === y)) {
+          const m = monsters.find(m => m.x === x && m.y === y);
+          cell.classList.add("monster");
+          cell.textContent = m.type;
+          const hp = m.hp;
+          const atk = 10 + hindiLetters.indexOf(m.type);
+          cell.onclick = () => speak(`${letterWords[m.type] || m.type}, स्वास्थ्य ${hp}, हमला ${atk}`);
+        } else if (treasures.some(t => t.x === x && t.y === y)) {
+          cell.classList.add("treasure");
+          cell.textContent = "ख";
+          cell.onclick = () => speak(labels["ख"]);
+        } else if (potions.some(p => p.x === x && p.y === y)) {
+          cell.classList.add("potion");
+          cell.textContent = "द";
+          cell.onclick = () => speak(labels["द"]);
+        } else if (x === stairs.x && y === stairs.y) {
+          cell.classList.add("stairs");
+          cell.textContent = "स";
+          cell.onclick = () => speak(labels["स"]);
+        } else if (walls.some(w => w.x === x && w.y === y)) {
+          cell.classList.add("wall");
+        }
+
+        gameGrid.appendChild(cell);
+      }
+    }
+  };
+
+  const randomPosition = (exclude = []) => {
+    let pos;
+    do {
+      pos = { x: Math.floor(Math.random() * gameSize), y: Math.floor(Math.random() * gameSize) };
+    } while (exclude.some(e => e.x === pos.x && e.y === pos.y));
+    return pos;
+  };
+
+  const isReachable = (start, targets, walls) => {
+    const queue = [start];
+    const visited = new Set();
+    const key = (p) => `${p.x},${p.y}`;
+    visited.add(key(start));
+
+    while (queue.length > 0) {
+      const { x, y } = queue.shift();
+      const neighbors = [
+        { x: x + 1, y }, { x: x - 1, y },
+        { x, y: y + 1 }, { x, y: y - 1 }
+      ].filter(p => p.x >= 0 && p.y >= 0 && p.x < gameSize && p.y < gameSize && !walls.some(w => w.x === p.x && w.y === p.y));
+
+      for (const n of neighbors) {
+        const k = key(n);
+        if (visited.has(k)) continue;
+        visited.add(k);
+        queue.push(n);
+        if (targets.some(t => t.x === n.x && t.y === n.y)) return true;
+      }
+    }
+
+    return false;
+  };
+
+  const generateValidLevel = () => {
+    while (true) {
+      const used = [{ x: 0, y: 0 }];
+      let walls = Array.from({ length: 15 }, () => randomPosition(used));
+      used.push(...walls);
+
+      let monsters = Array.from({ length: 3 }, () => {
+        const pos = randomPosition(used);
+        used.push(pos);
+        const letter = hindiLetters[Math.floor(Math.random() * (currentLevel + 1))];
+        return { ...pos, hp: 30 + 10 * hindiLetters.indexOf(letter), type: letter };
+      });
+
+      let treasures = Array.from({ length: 3 }, () => {
+        const pos = randomPosition(used);
+        used.push(pos);
+        return pos;
+      });
+
+      let potions = Array.from({ length: 2 }, () => {
+        const pos = randomPosition(used);
+        used.push(pos);
+        return pos;
+      });
+
+      let stairs = randomPosition(used);
+      used.push(stairs);
+
+      const reachable = isReachable({ x: 0, y: 0 }, [...monsters, ...treasures, ...potions, stairs], walls);
+      if (reachable) {
+        return { walls, monsters, treasures, potions, stairs };
+      }
+    }
+  };
+
+  const triggerTreasure = () => {
+    const outcome = Math.floor(Math.random() * 4);
+    switch (outcome) {
+      case 0: player.coins += 10; logEvent("10 सिक्के मिले!"); break;
+      case 1: player.armor += 20; logEvent("कवच प्राप्त हुआ!"); break;
+      case 2: player.hp = Math.min(player.maxHp, player.hp + 20); logEvent("दवा से स्वास्थ्य बढ़ा!"); break;
+      case 3:
+        const letter = hindiLetters[Math.floor(Math.random() * (currentLevel + 1))];
+        currentMonster = { x: player.x, y: player.y, hp: 30 + 10 * hindiLetters.indexOf(letter), type: letter };
+        monsters.push(currentMonster);
+        speak(letterWords[letter] || letter);
+        logEvent(`खजाना दरअसल राक्षस ${letter} निकला!`);
+        showDice();
+        return;
+    }
+    document.getElementById("coins").textContent = player.coins;
+    document.getElementById("armor").textContent = player.armor;
+    document.getElementById("health").textContent = player.hp;
+  };
+
+  const interact = (x, y) => {
+    if (walls.some(w => w.x === x && w.y === y)) return;
+
+    if (monsters.some(m => m.x === x && m.y === y)) {
+      currentMonster = monsters.find(m => m.x === x && m.y === y);
+      speak(letterWords[currentMonster.type] || currentMonster.type);
+      logEvent(`राक्षस ${currentMonster.type} से भिड़ंत!`);
+      showDice();
+    } else if (treasures.some(t => t.x === x && t.y === y)) {
+      speak(labels["ख"]);
+      triggerTreasure();
+      treasures = treasures.filter(t => !(t.x === x && t.y === y));
+    } else if (potions.some(p => p.x === x && p.y === y)) {
+      speak(labels["द"]);
+      player.hp = Math.min(player.maxHp, player.hp + 20);
+      potions = potions.filter(p => !(p.x === x && p.y === y));
+      logEvent("दवा पीकर स्वास्थ्य बढ़ाया गया!");
+      document.getElementById("health").textContent = player.hp;
+    } else if (x === stairs.x && y === stairs.y) {
+      speak(labels["स"]);
+      currentLevel = Math.min(hindiLetters.length - 1, currentLevel + 1);
+      document.getElementById("level").textContent = hindiLetters[currentLevel];
+      logEvent(`${hindiLetters[currentLevel]} स्तर पर गए`);
+      startLevel();
+    }
+  };
+
+  const movePlayer = (dx, dy) => {
+    if (document.getElementById("dice-game").style.display === "block") return;
+    const nx = player.x + dx;
+    const ny = player.y + dy;
+    if (nx < 0 || ny < 0 || nx >= gameSize || ny >= gameSize) return;
+    if (walls.some(w => w.x === nx && w.y === ny)) return;
+    player.x = nx;
+    player.y = ny;
+    interact(nx, ny);
+    drawGrid();
+  };
+
+  const startLevel = () => {
+    player.x = 0;
+    player.y = 0;
+    const level = generateValidLevel();
+    walls = level.walls;
+    monsters = level.monsters;
+    treasures = level.treasures;
+    potions = level.potions;
+    stairs = level.stairs;
+    hideDice();
+    drawGrid();
+  };
+
+  const startGame = () => {
+    player = { x: 0, y: 0, hp: 100, armor: 0, coins: 0, maxHp: 100 };
+    currentLevel = 0;
+    defeatedLetters = {};
+    updateConqueredLetters();
+    document.getElementById("level").textContent = hindiLetters[currentLevel];
+    document.getElementById("log-entries").innerHTML = '';
+    startLevel();
+  };
+
+  window.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowUp") movePlayer(0, -1);
+    else if (e.key === "ArrowDown") movePlayer(0, 1);
+    else if (e.key === "ArrowLeft") movePlayer(-1, 0);
+    else if (e.key === "ArrowRight") movePlayer(1, 0);
+  });
+
+  startGame();
+</script>
+</body>
+</html>

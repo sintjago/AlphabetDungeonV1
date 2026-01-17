@@ -1,0 +1,546 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Mazmorra del Alfabeto</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      text-align: center;
+    }
+    #game {
+      display: grid;
+      grid-template-columns: repeat(10, 40px);
+      grid-template-rows: repeat(10, 40px);
+      margin: 20px auto;
+      border: 2px solid #333;
+      width: 400px;
+      height: 400px;
+    }
+    .cell {
+      width: 40px;
+      height: 40px;
+      border: 1px solid #ccc;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.2em;
+    }
+    .player { background-color: #4CAF50; color: white; }
+    .monster { background-color: #f44336; color: white; }
+    .treasure { background-color: #ffeb3b; color: #333; }
+    .potion { background-color: #2196F3; color: white; }
+    .stairs { background-color: #9C27B0; color: white; }
+    .wall { background-color: #999; }
+    #event-log {
+      max-width: 400px;
+      margin: 20px auto;
+      text-align: left;
+      border: 1px solid #ddd;
+      padding: 10px;
+      height: 100px;
+      overflow-y: auto;
+      background: #fefefe;
+    }
+    .log-entry {
+      cursor: pointer;
+      color: #4CAF50;
+      margin: 0;
+    }
+    .log-entry:hover {
+      text-decoration: underline;
+    }
+    .accordion {
+      max-width: 600px;
+      margin: 10px auto;
+      text-align: left;
+      border: 1px solid #ccc;
+      background: #f9f9f9;
+    }
+    .accordion h3 {
+      margin: 0;
+      padding: 10px;
+      background: #eee;
+      cursor: pointer;
+    }
+    .accordion-content {
+      display: none;
+      padding: 10px;
+    }
+    .sound-toggle {
+      cursor: pointer;
+      margin-left: 10px;
+    }
+    #letters-conquered {
+      max-width: 400px;
+      margin: 20px auto;
+      border: 1px solid #ccc;
+      padding: 10px;
+      background-color: #fafafa;
+    }
+    .conquered-letter {
+      display: inline-block;
+      margin: 4px;
+      padding: 6px 10px;
+      border: 1px solid #999;
+      border-radius: 4px;
+      cursor: pointer;
+      background-color: #e0ffe0;
+    }
+    .conquered-letter:hover {
+      background-color: #c0ffc0;
+    }
+  </style>
+</head>
+<body>
+  <h1>Mazmorra del Alfabeto</h1>
+
+  <div class="accordion">
+    <h3 onclick="toggleAccordion()">¿Cómo jugar?</h3>
+    <div class="accordion-content" id="instructions">
+      <ul>
+        <li><strong>J</strong> = Jugador</li>
+        <li><strong>T</strong> = Tesoro</li>
+        <li><strong>P</strong> = Poción</li>
+        <li><strong>E</strong> = Escaleras</li>
+        <li><strong>A–Z</strong> + <strong>Ch, Ll, Ñ, Rr</strong> = Monstruos. ¡Haz clic para escuchar la info!</li>
+      </ul>
+      <p>Usa las flechas para moverte. Lucha contra monstruos con dados. ¡Recolecta botín, armadura y sobrevive niveles!</p>
+    </div>
+  </div>
+
+  <div id="game"></div>
+
+  <p id="status">¡Usa las teclas de flecha para explorar!</p>
+  <p>
+    Nivel: <span id="level">A</span> |
+    Salud: <span id="health">100</span> |
+    Armadura: <span id="armor">0</span> |
+    Monedas: <span id="coins">0</span>
+    <span class="sound-toggle" onclick="toggleSound()">🔊</span>
+  </p>
+
+  <div id="dice-game" style="display:none;">
+    <p>
+      ¡Tira los dados! Haz clic en cada botón para tirar.
+      <button onclick="autoResolveCombat()">Auto-Resolver</button>
+    </p>
+    <p>
+      Salud del Jugador: <span id="player-combat-health">0</span> |
+      Monstruo <span id="monster-type">X</span> Salud: <span id="monster-combat-health">0</span>
+    </p>
+    <button onclick="rollPlayerDice()">Dado del Jugador: <span id="player-dice">0</span></button>
+    <button onclick="rollMonsterDice()">Dado del Monstruo: <span id="monster-dice">0</span></button>
+    <p id="dice-result"></p>
+  </div>
+
+  <div id="event-log">
+    <p><strong>Registro de Eventos:</strong></p>
+    <div id="log-entries"></div>
+  </div>
+
+  <div id="letters-conquered">
+    <strong>Letras Derrotadas:</strong>
+    <div id="conquered-list"></div>
+  </div>
+<script>
+  const spanishAlphabet = [
+    "A", "B", "C", "Ch", "D", "E", "F", "G", "H", "I",
+    "J", "K", "L", "Ll", "M", "N", "Ñ", "O", "P", "Q",
+    "R", "Rr", "S", "T", "U", "V", "W", "X", "Y", "Z"
+  ];
+
+  const gameSize = 10;
+  const gameGrid = document.getElementById("game");
+
+  let player = { x: 0, y: 0, salud: 100, armadura: 0, monedas: 0, saludBase: 100 };
+  let nivelActual = 0;
+  let monstruos = [], tesoros = [], pociones = [], paredes = [], escaleras = {};
+  let monstruoActual = null;
+  let jugadorTiro = false, monstruoTiro = false, autoResolviendo = false;
+  let letrasDerrotadas = {};
+
+  let sonidoActivado = true;
+
+  const etiquetas = {
+    J: "J de Jugador",
+    T: "T de Tesoro",
+    P: "P de Poción",
+    E: "E de Escaleras"
+  };
+
+  const frasesLetras = {
+    A: "A de Árbol", B: "B de Barco", C: "C de Casa", Ch: "Ch de Chocolate",
+    D: "D de Dado", E: "E de Escaleras", F: "F de Fuego", G: "G de Gato",
+    H: "H de Huevo", I: "I de Isla", J: "J de Jugador", K: "K de Kilo",
+    L: "L de León", Ll: "Ll de Lluvia", M: "M de Mano", N: "N de Nube",
+    Ñ: "Ñ de Ñandú", O: "O de Oso", P: "P de Poción", Q: "Q de Queso",
+    R: "R de Rana", Rr: "Rr de Perro", S: "S de Sol", T: "T de Tesoro",
+    U: "U de Uva", V: "V de Vaca", W: "W de Whisky", X: "X de Xilófono",
+    Y: "Y de Yo-yo", Z: "Z de Zapato"
+  };
+
+  const toggleAccordion = () => {
+    const panel = document.getElementById("instructions");
+    panel.style.display = panel.style.display === "block" ? "none" : "block";
+  };
+
+  const toggleSound = () => {
+    sonidoActivado = !sonidoActivado;
+    document.querySelector('.sound-toggle').textContent = sonidoActivado ? '🔊' : '🔇';
+  };
+
+  const speak = (texto) => {
+    if (!sonidoActivado) return;
+    const utter = new SpeechSynthesisUtterance(texto);
+    utter.lang = "es-ES";
+    speechSynthesis.cancel();
+    setTimeout(() => speechSynthesis.speak(utter), 100);
+  };
+
+  const speakAndWait = (texto, callback) => {
+    if (!sonidoActivado) return callback();
+    const utter = new SpeechSynthesisUtterance(texto);
+    utter.lang = "es-ES";
+    utter.onend = callback;
+    speechSynthesis.cancel();
+    setTimeout(() => speechSynthesis.speak(utter), 100);
+  };
+
+  const logEvent = (mensaje) => {
+    const entrada = document.createElement("p");
+    entrada.textContent = mensaje;
+    entrada.className = "log-entry";
+    const partes = mensaje.split(" ");
+    const letra = partes[partes.length - 1];
+    if (letra.length <= 2 && spanishAlphabet.includes(letra)) {
+      entrada.onclick = () => speak(frasesLetras[letra] || letra);
+    }
+    const contenedorLog = document.getElementById("log-entries");
+    if (contenedorLog) contenedorLog.appendChild(entrada);
+  };
+
+  const updateConqueredLetters = () => {
+    const contenedor = document.getElementById("conquered-list");
+    contenedor.innerHTML = '';
+    Object.entries(letrasDerrotadas).forEach(([letra, cantidad]) => {
+      const caja = document.createElement("span");
+      caja.className = "conquered-letter";
+      caja.textContent = `${letra} × ${cantidad}`;
+      caja.onclick = () => speak(frasesLetras[letra] || letra);
+      contenedor.appendChild(caja);
+    });
+  };
+
+  const tirarDado = () => Math.floor(Math.random() * 20) + 1;
+
+  const rollPlayerDice = () => {
+    if (jugadorTiro) return;
+    const resultado = tirarDado();
+    document.getElementById('player-dice').textContent = resultado;
+    speak(`Jugador tira ${resultado}`);
+    jugadorTiro = true;
+    evaluarCombate();
+  };
+
+  const rollMonsterDice = () => {
+    if (monstruoTiro) return;
+    const resultado = tirarDado();
+    document.getElementById('monster-dice').textContent = resultado;
+    speak(`Monstruo tira ${resultado}`);
+    monstruoTiro = true;
+    evaluarCombate();
+  };
+
+  const autoResolveCombat = () => {
+    if (!monstruoActual) return;
+    autoResolviendo = true;
+
+    const bucle = () => {
+      if (!monstruoActual || !autoResolviendo) return;
+      const tiroJugador = tirarDado();
+      const tiroMonstruo = tirarDado();
+      document.getElementById('player-dice').textContent = tiroJugador;
+      document.getElementById('monster-dice').textContent = tiroMonstruo;
+      jugadorTiro = monstruoTiro = true;
+
+      speakAndWait(`Jugador tira ${tiroJugador}`, () => {
+        speakAndWait(`Monstruo tira ${tiroMonstruo}`, () => {
+          evaluarCombate();
+          if (monstruoActual && autoResolviendo) setTimeout(bucle, 600);
+        });
+      });
+    };
+
+    bucle();
+  };
+</script>
+<script>
+  const evaluarCombate = () => {
+    if (!jugadorTiro || !monstruoTiro) return;
+
+    const p = parseInt(document.getElementById("player-dice").textContent);
+    const m = parseInt(document.getElementById("monster-dice").textContent);
+
+    if (p >= m) {
+      monstruoActual.salud -= 20;
+      if (monstruoActual.salud <= 0) {
+        const letra = monstruoActual.tipo;
+        letrasDerrotadas[letra] = (letrasDerrotadas[letra] || 0) + 1;
+        updateConqueredLetters();
+        logEvent(`¡Derrotaste al monstruo ${letra}!`);
+        monstruos = monstruos.filter(mon => mon !== monstruoActual);
+        player.saludBase += 10;
+        player.salud += 10;
+        document.getElementById('status').textContent = `¡Venciste a ${letra}!`;
+        ocultarDados();
+        autoResolviendo = false;
+      } else {
+        logEvent(`Golpeaste al monstruo ${monstruoActual.tipo} (HP: ${monstruoActual.salud})`);
+        document.getElementById('status').textContent = `Golpeaste a ${monstruoActual.tipo} (HP: ${monstruoActual.salud})`;
+        reiniciarDados();
+      }
+    } else {
+      if (player.armadura > 0) player.armadura -= 20;
+      else player.salud -= 20;
+      logEvent(`¡El monstruo ${monstruoActual.tipo} te golpeó! (Tu HP: ${player.salud})`);
+      document.getElementById('status').textContent = `¡El monstruo te golpeó! (HP: ${player.salud})`;
+      if (player.salud <= 0) {
+        alert("¡Juego Terminado!");
+        iniciarJuego();
+        return;
+      }
+      reiniciarDados();
+    }
+
+    document.getElementById('health').textContent = player.salud;
+    document.getElementById('armor').textContent = player.armadura;
+    document.getElementById('player-combat-health').textContent = player.salud;
+    document.getElementById('monster-combat-health').textContent = monstruoActual?.salud || 0;
+  };
+
+  const reiniciarDados = () => {
+    jugadorTiro = false;
+    monstruoTiro = false;
+    document.getElementById('player-dice').textContent = "0";
+    document.getElementById('monster-dice').textContent = "0";
+  };
+
+  const mostrarDados = () => {
+    document.getElementById("dice-game").style.display = "block";
+    document.getElementById("monster-type").textContent = monstruoActual.tipo;
+    document.getElementById("player-combat-health").textContent = player.salud;
+    document.getElementById("monster-combat-health").textContent = monstruoActual.salud;
+    reiniciarDados();
+  };
+
+  const ocultarDados = () => {
+    document.getElementById("dice-game").style.display = "none";
+    monstruoActual = null;
+  };
+
+  const renderizarTablero = () => {
+    gameGrid.innerHTML = '';
+    for (let y = 0; y < gameSize; y++) {
+      for (let x = 0; x < gameSize; x++) {
+        const celda = document.createElement("div");
+        celda.className = "cell";
+
+        if (x === player.x && y === player.y) {
+          celda.classList.add("player");
+          celda.textContent = "J";
+          celda.onclick = () => speak(etiquetas["J"]);
+        } else if (monstruos.some(m => m.x === x && m.y === y)) {
+          const m = monstruos.find(m => m.x === x && m.y === y);
+          celda.classList.add("monster");
+          celda.textContent = m.tipo;
+          const hp = m.salud;
+          const atk = 10 + spanishAlphabet.indexOf(m.tipo);
+          celda.onclick = () => speak(`${frasesLetras[m.tipo] || m.tipo}. Salud ${hp}. Ataque ${atk}.`);
+        } else if (tesoros.some(t => t.x === x && t.y === y)) {
+          celda.classList.add("treasure");
+          celda.textContent = "T";
+          celda.onclick = () => speak(etiquetas["T"]);
+        } else if (pociones.some(p => p.x === x && p.y === y)) {
+          celda.classList.add("potion");
+          celda.textContent = "P";
+          celda.onclick = () => speak(etiquetas["P"]);
+        } else if (x === escaleras.x && y === escaleras.y) {
+          celda.classList.add("stairs");
+          celda.textContent = "E";
+          celda.onclick = () => speak(etiquetas["E"]);
+        } else if (paredes.some(w => w.x === x && w.y === y)) {
+          celda.classList.add("wall");
+        }
+
+        gameGrid.appendChild(celda);
+      }
+    }
+  };
+
+  const posicionAleatoria = (excluir = []) => {
+    let pos;
+    do {
+      pos = { x: Math.floor(Math.random() * gameSize), y: Math.floor(Math.random() * gameSize) };
+    } while (excluir.some(e => e.x === pos.x && e.y === pos.y));
+    return pos;
+  };
+
+  const esAlcanzable = (inicio, objetivos, paredes) => {
+    const cola = [inicio];
+    const visitado = new Set();
+    const clave = (p) => `${p.x},${p.y}`;
+    visitado.add(clave(inicio));
+
+    while (cola.length > 0) {
+      const { x, y } = cola.shift();
+      const vecinos = [
+        { x: x + 1, y }, { x: x - 1, y },
+        { x, y: y + 1 }, { x, y: y - 1 }
+      ].filter(p => p.x >= 0 && p.y >= 0 && p.x < gameSize && p.y < gameSize && !paredes.some(w => w.x === p.x && w.y === p.y));
+
+      for (const n of vecinos) {
+        const k = clave(n);
+        if (visitado.has(k)) continue;
+        visitado.add(k);
+        cola.push(n);
+        if (objetivos.some(t => t.x === n.x && t.y === n.y)) return true;
+      }
+    }
+
+    return false;
+  };
+
+  const generarNivelValido = () => {
+    while (true) {
+      const usados = [{ x: 0, y: 0 }];
+      let paredes = Array.from({ length: 15 }, () => posicionAleatoria(usados));
+      usados.push(...paredes);
+
+      let monstruos = Array.from({ length: 3 }, () => {
+        const pos = posicionAleatoria(usados);
+        usados.push(pos);
+        const tipo = spanishAlphabet[Math.floor(Math.random() * (nivelActual + 1))];
+        return { ...pos, salud: 30 + 10 * spanishAlphabet.indexOf(tipo), tipo };
+      });
+
+      let tesoros = Array.from({ length: 3 }, () => {
+        const pos = posicionAleatoria(usados);
+        usados.push(pos);
+        return pos;
+      });
+
+      let pociones = Array.from({ length: 2 }, () => {
+        const pos = posicionAleatoria(usados);
+        usados.push(pos);
+        return pos;
+      });
+
+      let escaleras = posicionAleatoria(usados);
+      usados.push(escaleras);
+
+      const alcanzable = esAlcanzable(
+        { x: 0, y: 0 },
+        [...monstruos, ...tesoros, ...pociones, escaleras],
+        paredes
+      );
+
+      if (alcanzable) {
+        return { paredes, monstruos, tesoros, pociones, escaleras };
+      }
+    }
+  };
+
+  const activarTesoro = () => {
+    const resultado = Math.floor(Math.random() * 4);
+    switch (resultado) {
+      case 0: player.monedas += 10; logEvent("¡Encontraste 10 monedas!"); break;
+      case 1: player.armadura += 20; logEvent("¡Encontraste armadura!"); break;
+      case 2: player.salud = Math.min(player.saludBase, player.salud + 20); logEvent("¡Te curaste con poción!"); break;
+      case 3:
+        const tipo = spanishAlphabet[Math.floor(Math.random() * (nivelActual + 1))];
+        monstruoActual = { x: player.x, y: player.y, salud: 30 + 10 * spanishAlphabet.indexOf(tipo), tipo };
+        monstruos.push(monstruoActual);
+        speak(frasesLetras[tipo] || tipo);
+        logEvent(`¡El tesoro era un monstruo ${tipo}!`);
+        mostrarDados();
+        return;
+    }
+    document.getElementById("coins").textContent = player.monedas;
+    document.getElementById("armor").textContent = player.armadura;
+    document.getElementById("health").textContent = player.salud;
+  };
+
+  const interactuarCon = (x, y) => {
+    if (paredes.some(w => w.x === x && w.y === y)) return;
+
+    if (monstruos.some(m => m.x === x && m.y === y)) {
+      monstruoActual = monstruos.find(m => m.x === x && m.y === y);
+      speak(frasesLetras[monstruoActual.tipo] || monstruoActual.tipo);
+      logEvent(`¡Encontraste al monstruo ${monstruoActual.tipo}!`);
+      mostrarDados();
+    } else if (tesoros.some(t => t.x === x && t.y === y)) {
+      speak(etiquetas["T"]);
+      activarTesoro();
+      tesoros = tesoros.filter(t => !(t.x === x && t.y === y));
+    } else if (pociones.some(p => p.x === x && p.y === y)) {
+      speak(etiquetas["P"]);
+      player.salud = Math.min(player.saludBase, player.salud + 20);
+      pociones = pociones.filter(p => !(p.x === x && p.y === y));
+      logEvent("¡Bebiste poción y te curaste!");
+      document.getElementById("health").textContent = player.salud;
+    } else if (x === escaleras.x && y === escaleras.y) {
+      speak(etiquetas["E"]);
+      nivelActual = Math.min(spanishAlphabet.length - 1, nivelActual + 1);
+      document.getElementById("level").textContent = spanishAlphabet[nivelActual];
+      logEvent("Descendiste al nivel " + spanishAlphabet[nivelActual]);
+      iniciarNivel();
+    }
+  };
+
+  const moverJugador = (dx, dy) => {
+    if (document.getElementById("dice-game").style.display === "block") return;
+    const nx = player.x + dx, ny = player.y + dy;
+    if (nx < 0 || ny < 0 || nx >= gameSize || ny >= gameSize) return;
+    if (paredes.some(w => w.x === nx && w.y === ny)) return;
+    player.x = nx;
+    player.y = ny;
+    interactuarCon(nx, ny);
+    renderizarTablero();
+  };
+
+  const iniciarNivel = () => {
+    player.x = 0;
+    player.y = 0;
+    const { paredes: w, monstruos: m, tesoros: t, pociones: p, escaleras: s } = generarNivelValido();
+    paredes = w;
+    monstruos = m;
+    tesoros = t;
+    pociones = p;
+    escaleras = s;
+    ocultarDados();
+    renderizarTablero();
+  };
+
+  const iniciarJuego = () => {
+    player = { x: 0, y: 0, salud: 100, armadura: 0, monedas: 0, saludBase: 100 };
+    nivelActual = 0;
+    letrasDerrotadas = {};
+    updateConqueredLetters();
+    document.getElementById("level").textContent = spanishAlphabet[nivelActual];
+    document.getElementById("log-entries").innerHTML = '';
+    iniciarNivel();
+  };
+
+  window.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowUp") moverJugador(0, -1);
+    else if (e.key === "ArrowDown") moverJugador(0, 1);
+    else if (e.key === "ArrowLeft") moverJugador(-1, 0);
+    else if (e.key === "ArrowRight") moverJugador(1, 0);
+  });
+
+  iniciarJuego();
+</script>
+</body>
+</html>

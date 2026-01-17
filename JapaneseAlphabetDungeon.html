@@ -1,0 +1,540 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>アルファベットダンジョン</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      text-align: center;
+    }
+    #game {
+      display: grid;
+      grid-template-columns: repeat(10, 40px);
+      grid-template-rows: repeat(10, 40px);
+      margin: 20px auto;
+      border: 2px solid #333;
+      width: 400px;
+      height: 400px;
+    }
+    .cell {
+      width: 40px;
+      height: 40px;
+      border: 1px solid #ccc;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.2em;
+    }
+    .player { background-color: #4CAF50; color: white; }
+    .monster { background-color: #f44336; color: white; }
+    .treasure { background-color: #ffeb3b; color: #333; }
+    .potion { background-color: #2196F3; color: white; }
+    .stairs { background-color: #9C27B0; color: white; }
+    .wall { background-color: #999; }
+    #event-log {
+      max-width: 400px;
+      margin: 20px auto;
+      text-align: left;
+      border: 1px solid #ddd;
+      padding: 10px;
+      height: 100px;
+      overflow-y: auto;
+      background: #fefefe;
+    }
+    .log-entry {
+      cursor: pointer;
+      color: #4CAF50;
+      margin: 0;
+    }
+    .log-entry:hover {
+      text-decoration: underline;
+    }
+    .accordion {
+      max-width: 600px;
+      margin: 10px auto;
+      text-align: left;
+      border: 1px solid #ccc;
+      background: #f9f9f9;
+    }
+    .accordion h3 {
+      margin: 0;
+      padding: 10px;
+      background: #eee;
+      cursor: pointer;
+    }
+    .accordion-content {
+      display: none;
+      padding: 10px;
+    }
+    .sound-toggle {
+      cursor: pointer;
+      margin-left: 10px;
+    }
+    #letters-conquered {
+      max-width: 400px;
+      margin: 20px auto;
+      border: 1px solid #ccc;
+      padding: 10px;
+      background-color: #fafafa;
+    }
+    .conquered-letter {
+      display: inline-block;
+      margin: 4px;
+      padding: 6px 10px;
+      border: 1px solid #999;
+      border-radius: 4px;
+      cursor: pointer;
+      background-color: #e0ffe0;
+    }
+    .conquered-letter:hover {
+      background-color: #c0ffc0;
+    }
+  </style>
+</head>
+<body>
+  <h1>アルファベットダンジョン</h1>
+
+  <div class="accordion">
+    <h3 onclick="toggleAccordion()">遊び方</h3>
+    <div class="accordion-content" id="instructions">
+      <ul>
+        <li><strongプ</strong> = プレイヤー</li>
+        <li><strong宝</strong> = 宝物</li>
+        <li><strong薬</strong> = 回復薬</li>
+        <li><strong階</strong> = 次の階段</li>
+        <li><strong>あ–ん</strong> = モンスター（クリックで説明が聞けます）</li>
+      </ul>
+      <p>矢印キーで移動します。サイコロを振ってモンスターと戦い、アイテムを集めて深い階に進みましょう！</p>
+    </div>
+  </div>
+
+  <div id="game"></div>
+
+  <p id="status">矢印キーで探索を開始！</p>
+  <p>
+    階: <span id="level">あ</span> |
+    体力: <span id="health">100</span> |
+    防御: <span id="armor">0</span> |
+    コイン: <span id="coins">0</span>
+    <span class="sound-toggle" onclick="toggleSound()">🔊</span>
+  </p>
+
+  <div id="dice-game" style="display:none;">
+    <p>
+      サイコロを振ってください！各ボタンをクリックして振ることができます。
+      <button onclick="autoResolveCombat()">自動戦闘</button>
+    </p>
+    <p>
+      プレイヤー体力: <span id="player-combat-health">0</span> |
+      モンスター <span id="monster-type">X</span> 体力: <span id="monster-combat-health">0</span>
+    </p>
+    <button onclick="rollPlayerDice()">プレイヤーのサイコロ: <span id="player-dice">0</span></button>
+    <button onclick="rollMonsterDice()">モンスターのサイコロ: <span id="monster-dice">0</span></button>
+    <p id="dice-result"></p>
+  </div>
+
+  <div id="event-log">
+    <p><strong>イベントログ:</strong></p>
+    <div id="log-entries"></div>
+  </div>
+
+  <div id="letters-conquered">
+    <strong>倒したモンスター:</strong>
+    <div id="conquered-list"></div>
+  </div>
+<script>
+  const japaneseKana = [
+    "あ", "い", "う", "え", "お",
+    "か", "き", "く", "け", "こ",
+    "さ", "し", "す", "せ", "そ",
+    "た", "ち", "つ", "て", "と",
+    "な", "に", "ぬ", "ね", "の"
+  ];
+
+  const gameSize = 10;
+  const gameGrid = document.getElementById("game");
+
+  let player = { x: 0, y: 0, hp: 100, armor: 0, coins: 0, maxHp: 100 };
+  let currentLevel = 0;
+  let monsters = [], treasures = [], potions = [], walls = [], stairs = {};
+  let currentMonster = null;
+  let playerRolled = false, monsterRolled = false, autoResolving = false;
+  let defeatedLetters = {};
+
+  let soundEnabled = true;
+
+  const labels = {
+    "プ": "プはプレイヤー",
+    "宝": "宝は宝物",
+    "薬": "薬は回復薬",
+    "階": "階は次の階段"
+  };
+
+  const kanaWords = {
+    "あ": "あはアイスクリーム", "い": "いはいぬ", "う": "うはうさぎ", "え": "えはえんぴつ", "お": "おはおにぎり",
+    "か": "かはかさ", "き": "きはきつね", "く": "くはくじら", "け": "けはけむし", "こ": "こはこま",
+    "さ": "さはさかな", "し": "しはしんかんせん", "す": "すはすいか", "せ": "せはせみ", "そ": "そはそら",
+    "た": "たはたこ", "ち": "ちはちず", "つ": "つはつき", "て": "てはてぶくろ", "と": "とはとけい",
+    "な": "なはなす", "に": "にはにんじん", "ぬ": "ぬはぬいぐるみ", "ね": "ねはねこ", "の": "のはのり"
+  };
+
+  const toggleAccordion = () => {
+    const panel = document.getElementById("instructions");
+    panel.style.display = panel.style.display === "block" ? "none" : "block";
+  };
+
+  const toggleSound = () => {
+    soundEnabled = !soundEnabled;
+    document.querySelector('.sound-toggle').textContent = soundEnabled ? '🔊' : '🔇';
+  };
+
+  const speak = (text) => {
+    if (!soundEnabled) return;
+    const utter = new SpeechSynthesisUtterance(text);
+    utter.lang = "ja-JP";
+    speechSynthesis.cancel();
+    setTimeout(() => speechSynthesis.speak(utter), 100);
+  };
+
+  const speakAndWait = (text, callback) => {
+    if (!soundEnabled) return callback();
+    const utter = new SpeechSynthesisUtterance(text);
+    utter.lang = "ja-JP";
+    utter.onend = callback;
+    speechSynthesis.cancel();
+    setTimeout(() => speechSynthesis.speak(utter), 100);
+  };
+
+  const logEvent = (message) => {
+    const entry = document.createElement("p");
+    entry.textContent = message;
+    entry.className = "log-entry";
+    const last = message.split(" ").at(-1);
+    if (kanaWords[last] || labels[last]) {
+      entry.onclick = () => speak(kanaWords[last] || labels[last]);
+    }
+    const logBox = document.getElementById("log-entries");
+    if (logBox) logBox.appendChild(entry);
+  };
+
+  const updateConqueredLetters = () => {
+    const box = document.getElementById("conquered-list");
+    box.innerHTML = '';
+    Object.entries(defeatedLetters).forEach(([letter, count]) => {
+      const tag = document.createElement("span");
+      tag.className = "conquered-letter";
+      tag.textContent = `${letter} × ${count}`;
+      tag.onclick = () => speak(kanaWords[letter] || letter);
+      box.appendChild(tag);
+    });
+  };
+
+  const rollDie = () => Math.floor(Math.random() * 20) + 1;
+
+  const rollPlayerDice = () => {
+    if (playerRolled) return;
+    const result = rollDie();
+    document.getElementById('player-dice').textContent = result;
+    speak(`プレイヤーは ${result} を出しました`);
+    playerRolled = true;
+    evaluateCombat();
+  };
+
+  const rollMonsterDice = () => {
+    if (monsterRolled) return;
+    const result = rollDie();
+    document.getElementById('monster-dice').textContent = result;
+    speak(`モンスターは ${result} を出しました`);
+    monsterRolled = true;
+    evaluateCombat();
+  };
+
+  const autoResolveCombat = () => {
+    if (!currentMonster) return;
+    autoResolving = true;
+
+    const loop = () => {
+      if (!currentMonster || !autoResolving) return;
+      const pRoll = rollDie();
+      const mRoll = rollDie();
+      document.getElementById('player-dice').textContent = pRoll;
+      document.getElementById('monster-dice').textContent = mRoll;
+      playerRolled = monsterRolled = true;
+
+      speakAndWait(`プレイヤーは ${pRoll} を出しました`, () => {
+        speakAndWait(`モンスターは ${mRoll} を出しました`, () => {
+          evaluateCombat();
+          if (currentMonster && autoResolving) setTimeout(loop, 600);
+        });
+      });
+    };
+
+    loop();
+  };
+</script>
+<script>
+  const evaluateCombat = () => {
+    if (!playerRolled || !monsterRolled) return;
+
+    const p = parseInt(document.getElementById("player-dice").textContent);
+    const m = parseInt(document.getElementById("monster-dice").textContent);
+
+    if (p >= m) {
+      currentMonster.hp -= 20;
+      if (currentMonster.hp <= 0) {
+        const kana = currentMonster.type;
+        defeatedLetters[kana] = (defeatedLetters[kana] || 0) + 1;
+        updateConqueredLetters();
+        logEvent(`モンスター ${kana} を倒した！`);
+        monsters = monsters.filter(mon => mon !== currentMonster);
+        player.maxHp += 10;
+        player.hp += 10;
+        document.getElementById('status').textContent = `${kana} を倒しました！`;
+        hideDice();
+        autoResolving = false;
+      } else {
+        logEvent(`モンスター ${currentMonster.type} に攻撃 (HP: ${currentMonster.hp})`);
+        document.getElementById('status').textContent = `モンスターに攻撃 (HP: ${currentMonster.hp})`;
+        resetDice();
+      }
+    } else {
+      if (player.armor > 0) player.armor -= 20;
+      else player.hp -= 20;
+      logEvent(`モンスター ${currentMonster.type} にダメージを受けた！ (HP: ${player.hp})`);
+      document.getElementById('status').textContent = `ダメージを受けた！ (HP: ${player.hp})`;
+      if (player.hp <= 0) {
+        alert("ゲームオーバー！");
+        startGame();
+        return;
+      }
+      resetDice();
+    }
+
+    document.getElementById('health').textContent = player.hp;
+    document.getElementById('armor').textContent = player.armor;
+    document.getElementById('player-combat-health').textContent = player.hp;
+    document.getElementById('monster-combat-health').textContent = currentMonster?.hp || 0;
+  };
+
+  const resetDice = () => {
+    playerRolled = false;
+    monsterRolled = false;
+    document.getElementById('player-dice').textContent = "0";
+    document.getElementById('monster-dice').textContent = "0";
+  };
+
+  const showDice = () => {
+    document.getElementById("dice-game").style.display = "block";
+    document.getElementById("monster-type").textContent = currentMonster.type;
+    document.getElementById("player-combat-health").textContent = player.hp;
+    document.getElementById("monster-combat-health").textContent = currentMonster.hp;
+    resetDice();
+  };
+
+  const hideDice = () => {
+    document.getElementById("dice-game").style.display = "none";
+    currentMonster = null;
+  };
+
+  const drawGrid = () => {
+    gameGrid.innerHTML = '';
+    for (let y = 0; y < gameSize; y++) {
+      for (let x = 0; x < gameSize; x++) {
+        const cell = document.createElement("div");
+        cell.className = "cell";
+
+        if (x === player.x && y === player.y) {
+          cell.classList.add("player");
+          cell.textContent = "プ";
+          cell.onclick = () => speak(labels["プ"]);
+        } else if (monsters.some(m => m.x === x && m.y === y)) {
+          const m = monsters.find(m => m.x === x && m.y === y);
+          cell.classList.add("monster");
+          cell.textContent = m.type;
+          const hp = m.hp;
+          const atk = 10 + japaneseKana.indexOf(m.type);
+          cell.onclick = () => speak(`${kanaWords[m.type] || m.type}、体力 ${hp}、攻撃力 ${atk}`);
+        } else if (treasures.some(t => t.x === x && t.y === y)) {
+          cell.classList.add("treasure");
+          cell.textContent = "宝";
+          cell.onclick = () => speak(labels["宝"]);
+        } else if (potions.some(p => p.x === x && p.y === y)) {
+          cell.classList.add("potion");
+          cell.textContent = "薬";
+          cell.onclick = () => speak(labels["薬"]);
+        } else if (x === stairs.x && y === stairs.y) {
+          cell.classList.add("stairs");
+          cell.textContent = "階";
+          cell.onclick = () => speak(labels["階"]);
+        } else if (walls.some(w => w.x === x && w.y === y)) {
+          cell.classList.add("wall");
+        }
+
+        gameGrid.appendChild(cell);
+      }
+    }
+  };
+
+  const randomPosition = (exclude = []) => {
+    let pos;
+    do {
+      pos = { x: Math.floor(Math.random() * gameSize), y: Math.floor(Math.random() * gameSize) };
+    } while (exclude.some(e => e.x === pos.x && e.y === pos.y));
+    return pos;
+  };
+
+  const isReachable = (start, targets, walls) => {
+    const queue = [start];
+    const visited = new Set();
+    const key = (p) => `${p.x},${p.y}`;
+    visited.add(key(start));
+
+    while (queue.length > 0) {
+      const { x, y } = queue.shift();
+      const neighbors = [
+        { x: x + 1, y }, { x: x - 1, y },
+        { x, y: y + 1 }, { x, y: y - 1 }
+      ].filter(p => p.x >= 0 && p.y >= 0 && p.x < gameSize && p.y < gameSize && !walls.some(w => w.x === p.x && w.y === p.y));
+
+      for (const n of neighbors) {
+        const k = key(n);
+        if (visited.has(k)) continue;
+        visited.add(k);
+        queue.push(n);
+        if (targets.some(t => t.x === n.x && t.y === n.y)) return true;
+      }
+    }
+
+    return false;
+  };
+
+  const generateValidLevel = () => {
+    while (true) {
+      const used = [{ x: 0, y: 0 }];
+      let walls = Array.from({ length: 15 }, () => randomPosition(used));
+      used.push(...walls);
+
+      let monsters = Array.from({ length: 3 }, () => {
+        const pos = randomPosition(used);
+        used.push(pos);
+        const kana = japaneseKana[Math.floor(Math.random() * (currentLevel + 1))];
+        return { ...pos, hp: 30 + 10 * japaneseKana.indexOf(kana), type: kana };
+      });
+
+      let treasures = Array.from({ length: 3 }, () => {
+        const pos = randomPosition(used);
+        used.push(pos);
+        return pos;
+      });
+
+      let potions = Array.from({ length: 2 }, () => {
+        const pos = randomPosition(used);
+        used.push(pos);
+        return pos;
+      });
+
+      let stairs = randomPosition(used);
+      used.push(stairs);
+
+      const reachable = isReachable({ x: 0, y: 0 }, [...monsters, ...treasures, ...potions, stairs], walls);
+      if (reachable) {
+        return { walls, monsters, treasures, potions, stairs };
+      }
+    }
+  };
+
+  const triggerTreasure = () => {
+    const outcome = Math.floor(Math.random() * 4);
+    switch (outcome) {
+      case 0: player.coins += 10; logEvent("10コインを獲得！"); break;
+      case 1: player.armor += 20; logEvent("防御アップ！"); break;
+      case 2: player.hp = Math.min(player.maxHp, player.hp + 20); logEvent("回復薬を使った！"); break;
+      case 3:
+        const kana = japaneseKana[Math.floor(Math.random() * (currentLevel + 1))];
+        currentMonster = { x: player.x, y: player.y, hp: 30 + 10 * japaneseKana.indexOf(kana), type: kana };
+        monsters.push(currentMonster);
+        speak(kanaWords[kana] || kana);
+        logEvent(`宝物がモンスター ${kana} に変わった！`);
+        showDice();
+        return;
+    }
+    document.getElementById("coins").textContent = player.coins;
+    document.getElementById("armor").textContent = player.armor;
+    document.getElementById("health").textContent = player.hp;
+  };
+
+  const interact = (x, y) => {
+    if (walls.some(w => w.x === x && w.y === y)) return;
+
+    if (monsters.some(m => m.x === x && m.y === y)) {
+      currentMonster = monsters.find(m => m.x === x && m.y === y);
+      speak(kanaWords[currentMonster.type] || currentMonster.type);
+      logEvent(`モンスター ${currentMonster.type} に遭遇！`);
+      showDice();
+    } else if (treasures.some(t => t.x === x && t.y === y)) {
+      speak(labels["宝"]);
+      triggerTreasure();
+      treasures = treasures.filter(t => !(t.x === x && t.y === y));
+    } else if (potions.some(p => p.x === x && p.y === y)) {
+      speak(labels["薬"]);
+      player.hp = Math.min(player.maxHp, player.hp + 20);
+      potions = potions.filter(p => !(p.x === x && p.y === y));
+      logEvent("回復薬で体力を回復！");
+      document.getElementById("health").textContent = player.hp;
+    } else if (x === stairs.x && y === stairs.y) {
+      speak(labels["階"]);
+      currentLevel = Math.min(japaneseKana.length - 1, currentLevel + 1);
+      document.getElementById("level").textContent = japaneseKana[currentLevel];
+      logEvent(`${japaneseKana[currentLevel]} 階に進んだ`);
+      startLevel();
+    }
+  };
+
+  const movePlayer = (dx, dy) => {
+    if (document.getElementById("dice-game").style.display === "block") return;
+    const nx = player.x + dx;
+    const ny = player.y + dy;
+    if (nx < 0 || ny < 0 || nx >= gameSize || ny >= gameSize) return;
+    if (walls.some(w => w.x === nx && w.y === ny)) return;
+    player.x = nx;
+    player.y = ny;
+    interact(nx, ny);
+    drawGrid();
+  };
+
+  const startLevel = () => {
+    player.x = 0;
+    player.y = 0;
+    const level = generateValidLevel();
+    walls = level.walls;
+    monsters = level.monsters;
+    treasures = level.treasures;
+    potions = level.potions;
+    stairs = level.stairs;
+    hideDice();
+    drawGrid();
+  };
+
+  const startGame = () => {
+    player = { x: 0, y: 0, hp: 100, armor: 0, coins: 0, maxHp: 100 };
+    currentLevel = 0;
+    defeatedLetters = {};
+    updateConqueredLetters();
+    document.getElementById("level").textContent = japaneseKana[currentLevel];
+    document.getElementById("log-entries").innerHTML = '';
+    startLevel();
+  };
+
+  window.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowUp") movePlayer(0, -1);
+    else if (e.key === "ArrowDown") movePlayer(0, 1);
+    else if (e.key === "ArrowLeft") movePlayer(-1, 0);
+    else if (e.key === "ArrowRight") movePlayer(1, 0);
+  });
+
+  startGame();
+</script>
+</body>
+</html>
